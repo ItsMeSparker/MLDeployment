@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify
 import torch
 import torch.nn as nn
+import torch.quantization # Import the quantization library
 import torchvision.models as models
 import torchvision.transforms as transforms
 from PIL import Image
@@ -9,30 +10,40 @@ from collections import OrderedDict
 
 app = Flask(__name__)
 
-# Model architecture
+# --- Model Loading and Quantization ---
+
+# 1. Load the original model architecture
 model = models.densenet121(weights=None)
 num_ftrs = model.classifier.in_features
 model.classifier = nn.Linear(num_ftrs, 3)  # 3 classes: Normal, Nevus, Melanoma
 
-# Load model weights
+# 2. Load the trained weights
 checkpoint = torch.load('DenseNetModelV5_3.pth', map_location=torch.device('cpu'))
 state_dict = checkpoint['model_state_dict']
 new_state_dict = OrderedDict((k[6:] if k.startswith('model.') else k, v) for k, v in state_dict.items())
 model.load_state_dict(new_state_dict)
 model.eval()
 
-# Preprocessing
+# 3. Create a quantized version of the model (NEW STEP)
+# This new model will be used for predictions as it is much faster.
+quantized_model = torch.quantization.quantize_dynamic(
+    model, {torch.nn.Linear}, dtype=torch.qint8
+)
+
+# --- Preprocessing and Class Labels ---
+
 preprocess = transforms.Compose([
     transforms.Resize((250, 250)),
     transforms.ToTensor(),
 ])
 
-# Class labels
 lesion_map = {
     0: 'Normal',
     1: 'Nevus',
     2: 'Melanoma',
 }
+
+# --- Prediction Functions ---
 
 def transform_image(image_bytes):
     image = Image.open(io.BytesIO(image_bytes)).convert('RGB')
@@ -40,11 +51,14 @@ def transform_image(image_bytes):
 
 def get_prediction(tensor):
     with torch.no_grad():
-        output = model(tensor)
+        # Use the faster QUANTIZED model for inference
+        output = quantized_model(tensor)
         probs = torch.nn.functional.softmax(output[0], dim=0)
         idx = probs.argmax().item()
         confidence = probs[idx].item()
         return lesion_map.get(idx, 'Unknown'), confidence
+
+# --- Flask Routes ---
 
 @app.route('/predict', methods=['POST'])
 def predict():
