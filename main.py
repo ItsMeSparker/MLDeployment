@@ -18,7 +18,11 @@ num_ftrs = model.classifier.in_features
 model.classifier = nn.Linear(num_ftrs, 3)  # 3 classes: Normal, Nevus, Melanoma
 
 # 2. Load the trained weights
-checkpoint = torch.load('DenseNetModelV5_3.pth', map_location=torch.device('cpu'))
+if torch.cuda.is_available():
+  device = 'cuda'
+else:
+  device = 'cpu'
+checkpoint = torch.load('DenseNetModelV5_3.pth', map_location=torch.device(device))
 state_dict = checkpoint['model_state_dict']
 new_state_dict = OrderedDict((k[6:] if k.startswith('model.') else k, v) for k, v in state_dict.items())
 model.load_state_dict(new_state_dict)
@@ -33,7 +37,7 @@ quantized_model = torch.quantization.quantize_dynamic(
 # --- Preprocessing and Class Labels ---
 
 preprocess = transforms.Compose([
-    transforms.Resize((250, 250)),
+    transforms.Resize((450, 450)),
     transforms.ToTensor(),
 ])
 
